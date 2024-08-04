@@ -1,0 +1,270 @@
+---
+title: "GBM_report_AhmedRayan_C2168667"
+author: 'Rayan Ahmed '
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libaray Required}
+library(Seurat)
+library(patchwork)
+library(dplyr)
+```
+
+# Seurat Object
+
+### Load the Dataset into Seurat Object
+
+```{r Load the Dataset into Seurat Object }
+main <- read.table('Data/GSE84465_GBM_All_data.csv', sep=" ", header=TRUE)
+object_seurat <- CreateSeuratObject(counts = main, project = "GSE84465")
+object_seurat
+slotNames(object_seurat)
+```
+
+```{r }
+object_seurat[["percent.mt"]] <- PercentageFeatureSet(object_seurat, pattern = "^MT-")
+
+```
+
+### Dataset Quality Check
+
+```{r Data Quality Check}
+# Visualize QC metrics as a violin plot
+VlnPlot(object = object_seurat, features = c("nFeature_RNA", "nCount_RNA", "percent.mt", ncol = 3))
+```
+
+### Feature Quality Check
+
+```{r Feature Quality Check }
+# Feature scatter plot
+plot1 <- FeatureScatter(object_seurat, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(object_seurat, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+### Normalization of Data
+
+```{r Normalizing Data}
+object_seurat <- NormalizeData(object_seurat, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+### Identification of highly variable Genes
+
+```{r Identify HVGs}
+# Identification of highly variable features (feature selection)
+object_seurat <- FindVariableFeatures(object_seurat, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(object_seurat), 10)
+#write.csv(top10, file="top_hgv.csv", row.names=FALSE)
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(object_seurat)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot2
+```
+
+### Scale The Data
+
+```{r Scaling Data}
+all.genes <- rownames(object_seurat)
+object_seurat <- ScaleData(object_seurat, features=all.genes)
+```
+
+### Perform linear dimensional reduction
+
+```{r Dimensional reduction Using PCA}
+# linear dimensional reduction
+object_seurat <- RunPCA(object_seurat, features = VariableFeatures(object = object_seurat))
+```
+
+### Plot Heatmap For PCs
+
+```{r Heatmap for top 15 PCs}
+DimHeatmap(object_seurat, dims = 1:15, cells = 500, balanced = TRUE)
+```
+
+### Plot For PCs
+
+```{r PCA Plot}
+DimPlot(object_seurat, reduction = "pca")
+```
+
+### Statistical Significance of PCA scores
+
+```{r statistical significance of PCA scores}
+# Dimensionality of the dataset
+object_seurat <- JackStraw(object_seurat, num.replicate = 100)
+object_seurat <- ScoreJackStraw(object_seurat, dims = 1:20)
+JackStrawPlot(object_seurat, dims = 1:15)
+```
+
+### Cluster Cells
+
+```{r Cluster Cells}
+#Cluster cells
+object_seurat <- FindNeighbors(object_seurat, dims= 1:10)
+object_seurat <- FindClusters(object_seurat, resolution = 0.5)
+head(Idents(object_seurat), 10)
+```
+
+### Dimensionality reduction - UMAP Method
+
+```{r dimensionality reduction UMAP }
+# Run non-linear dimensional reduction (UMAP)
+object_seurat <- RunUMAP(object_seurat, dims = 1:10)
+DimPlot(object_seurat, reduction = "umap")
+```
+
+### Total Gene Across all Clusters Histogram
+
+```{r Gene count across all Clusters}
+# Get the cluster labels
+cluster_labels <- Idents(object_seurat)
+
+# Count the number of cells in each cluster
+cluster_counts <- table(cluster_labels)
+
+# Create a data frame for ggplot
+cluster_data <- data.frame(Cluster = names(cluster_counts), Count = as.numeric(cluster_counts))
+
+# Create the histogram
+library(ggplot2)
+ggplot(cluster_data, aes(x = Count, y = Cluster)) +
+  geom_col() +
+  xlab("Number of Cells") +
+  ylab("Cluster") +
+  theme_minimal()
+
+print(cluster_data)
+#write.csv(cluster_data, file="cluster_data.csv", row.names=FALSE)
+```
+
+### Markers distinguishing in Clusters
+
+```{r Finding Markers in Clusters}
+# find all markers distinguishing cluster 0 from cluster 2
+markers_for_cluster0 <- FindMarkers(object_seurat, ident.1 = 0, ident.2 = 2, min.pct = 0.25)
+head(markers_for_cluster0, n=5)
+```
+
+### Naming the Clusters
+
+```{r Lableling the Clusters}
+updated_cluster_ids <- c("Myeloid", "Cancer", "Macrophages", "Unknown", "Myeloid", "Cancer", "Microglia", "Microglia", "Cancer", "Unknown", "Unknown", "Unknown", "Oligodendrocyte", "Unknown", "Astrocyte", "Unknown", "Cancer", "Neurons")
+names(updated_cluster_ids) <- levels(object_seurat)
+object_seurat <- RenameIdents(object_seurat, updated_cluster_ids)
+DimPlot(object_seurat, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+```
+
+### Differential Expression for Features
+
+```{r Differential Expression for Features}
+# Find differentially expressed features (cluster biomarkers)
+seurat_markers <- FindAllMarkers(object_seurat, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+seurat_markers %>% group_by(cluster) %>% top_n(n=5, wt=avg_log2FC)
+top_markers<- seurat_markers %>% group_by(cluster) %>% top_n(n=3, wt=avg_log2FC)
+#write.csv(top_markers, file="top_markers.csv", row.names=FALSE)
+```
+
+### Heatmap for Top 3 Marker in Clusters
+
+```{r Heatmap for Top 3 Marker accross Clusters}
+top3 <- seurat_markers %>% group_by(cluster) %>% top_n(n=3, wt=avg_log2FC)
+DoHeatmap(object_seurat, features = top3$gene) 
+```
+
+### Differential Expression Using seurat
+
+```{r Differential Expression Using seurat}
+# Find differentially expressed features between Myeloid and  Macrophages
+myeloid_markers <- FindMarkers(object_seurat, ident.1 = "Myeloid", ident.2 = "Macrophages")
+# view results
+head(myeloid_markers, 10)
+```
+
+### Volcano Plot For seaurt identified DEGs
+
+```{r Volcano Plot For seaurt DEGs}
+#volcano plot for myeloid_markers
+#install.packages("melt")
+#library(melt)
+# Convert the data frame to a long format for plotting
+#myeloid_markers_long <- melt(myeloid_markers, id.vars = c( "p_val", "avg_log2FC", "pct.1", "pct.2", "p_val_adj"))
+
+# Create a volcano plot
+#ggplot(myeloid_markers_long, aes(x = avg_log2FC, y = -log10(p_val), color = ifelse(abs(avg_log2FC) > 1, "Significant", "Not Significant"))) +
+ # geom_point() +
+ # theme_classic() +
+  #labs(x = "Log2 Fold Change", y = "-Log10 P-Value", color = "Significance") +
+  #scale_color_manual(values = c("blue", "red")) +
+  #theme(legend.position = "bottom")
+
+```
+
+### Differential Expression Using DESeq2
+
+```{r Differential Expression Using DESeq2}
+### Differential expression testing using DESeq2
+markers_degs <- FindMarkers(object_seurat, ident.1 = "Myeloid", ident.2 = "Macrophages", test.use = "DESeq2", max.cells.per.ident = 50)
+
+# view results
+head(markers_degs, 10)
+                   
+```
+
+### Volcano Plot For DESeq2 identified DEGs
+
+```{r Volcano Plot For DESeq2 DEGs}
+#volcano plot for markers_degs
+# Convert the data frame to a long format for plotting
+#markers_degs_long <- melt(markers_degs, id.vars = c( "p_val", "avg_log2FC", "pct.1", "pct.2", "p_val_adj"))
+
+# Create a volcano plot
+#ggplot(markers_degs_long, aes(x = avg_log2FC, y = -log10(p_val), color = ifelse(abs(avg_log2FC) > 1, "Significant", "Not Significant"))) +
+  #geom_point() +
+  #theme_classic() +
+  #labs(x = "Log2 Fold Change", y = "-Log10 P-Value", color = "Significance") +
+  #scale_color_manual(values = c("blue", "red")) +
+  #theme(legend.position = "bottom")
+```
+
+### Dot Plot for DEGs in Myeliod and Macrophages
+
+```{r Dot Plot for DEGs in My and Marco}
+
+my_and_mac <- c('NFKBID','KIAA1274','GJA1','C3AR1','LYZ','IRF8','HSPA7','IGFBP2','SIGLEC10','CA2')
+
+DotPlot(object_seurat, features = my_and_mac , idents = c("Myeloid", "Macrophages")) + RotatedAxis()
+```
+
+### Heatmap for DEGs across all clusters
+
+```{r Heatmap for DEGs against all Clusters}
+### Heatmap for differentially expressed genes among all genes
+DoHeatmap(subset(object_seurat, downsample =100), features = my_and_mac, size = 4)
+```
+
+### Violin plot for DEGs across all clusters
+
+```{r Violin Plot for DEGs against all clusters}
+### Violin plot for differentially genes among all cell groups
+for (i in 1:10){
+  print(VlnPlot(object_seurat, features = seurat_markers$gene[i]), pt.size=0.1) + NoLegend()
+}
+```
+
+### Dot Plot for DEGs across all clusters
+
+```{r Dot Plot for DEGs against all clusters}
+### Dot plot for differentially genes among all cell groups
+for (i in 1:10){
+  print(DotPlot(object_seurat, features = seurat_markers$gene[i])) + RotatedAxis()
+}
+```
