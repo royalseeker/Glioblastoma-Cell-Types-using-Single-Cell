@@ -1,5 +1,5 @@
 ---
-title: "GBM_report_AhmedRayan_C2168667"
+title: "GBM_report"
 author: 'Rayan Ahmed '
 output:
   word_document: default
